@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Painel da Rifa</title><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+body{font-family:Arial;margin:0;background:#f5f7fb;color:#202534}.wrap{max-width:1200px;margin:auto;padding:20px}.card{background:#fff;border:1px solid #e3e7ef;border-radius:15px;padding:18px;margin:15px 0}.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}.stat{padding:15px;border:1px solid #e3e7ef;border-radius:12px}.stat b{display:block;font-size:23px;margin-top:5px}.btn{border:0;border-radius:8px;padding:9px 12px;cursor:pointer;font-weight:bold}.primary{background:#5b4bdb;color:white}.ok{background:#dff4e8;color:#137a45}.danger{background:#f9dddd;color:#a51f1f}.warn{background:#fff0c7;color:#936400}table{width:100%;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid #eee;text-align:left}input{padding:9px;border:1px solid #ddd;border-radius:8px;margin:3px}.login{max-width:420px;margin:70px auto}.grid{display:grid;grid-template-columns:1fr 1fr;gap:15px}.progress{height:15px;background:#eee;border-radius:10px;overflow:hidden}.bar{height:100%;background:#5b4bdb;width:0}@media(max-width:800px){.stats{grid-template-columns:1fr 1fr}.grid{grid-template-columns:1fr}table{font-size:12px}}
+</style></head><body><div class="wrap">
+<div id="login" class="login card"><h1>🔐 Painel administrativo</h1><input id="email" type="email" placeholder="E-mail" style="width:100%;box-sizing:border-box"><input id="password" type="password" placeholder="Senha" style="width:100%;box-sizing:border-box"><br><button class="btn primary" onclick="login()">Entrar</button><p id="msg"></p></div>
+<div id="app" style="display:none"><div class="card"><h1>🎟️ Painel da Rifa</h1><button class="btn" onclick="logout()">Sair</button><p id="early"></p></div>
+<div class="stats"><div class="stat">Total<b>150</b></div><div class="stat">Disponíveis<b id="a">0</b></div><div class="stat">Reservados<b id="r">0</b></div><div class="stat">Pagos<b id="p">0</b></div><div class="stat">Arrecadado<b id="rev">R$ 0,00</b></div></div>
+<div class="card"><p><b>Progresso das vendas</b></p><div class="progress"><div id="bar" class="bar"></div></div><p id="pct">0%</p></div>
+<div class="grid"><div class="card"><h2>💰 Caixa</h2><p>Despesas: <b id="exp">R$ 0,00</b></p><p>Saldo: <b id="bal">R$ 0,00</b></p><input id="desc" placeholder="Descrição"><input id="val" type="number" step=".01" placeholder="Valor"><button class="btn primary" onclick="expense()">Registrar despesa</button></div>
+<div class="card"><h2>📅 Sorteio</h2><p>Data prevista: <b>20/12/2026</b></p><p>Se os 150 forem pagos, o sistema indicará que a rifa está pronta para sorteio antecipado.</p></div></div>
+<div class="card"><h2>👥 Reservas e pagamentos</h2><button class="btn ok" onclick="enableNotifications()">🔔 Ativar alertas neste celular</button><span id="notifyStatus" class="muted" style="margin-left:10px"></span><input id="search" placeholder="Pesquisar nome, WhatsApp ou número" oninput="load()"><table><thead><tr><th>Nº</th><th>Nome</th><th>WhatsApp</th><th>Status</th><th>Reserva</th><th>Ações</th></tr></thead><tbody id="rows"></tbody></table></div>
+<div class="card"><h2>📤 Exportar compradores</h2><button class="btn primary" onclick="exportCSV()">Baixar CSV</button></div>
+</div></div>
+<script>
+const SUPABASE_URL="https://qweoqywohknsxxdlblvl.supabase.co";
+const SUPABASE_KEY="sb_publishable_dFaPe9x4UNzoT94jm_LWlw_8Uemwyn1";
+const RIFA_ID="48863e00-06ca-491c-a60e-12c568298055";
+const sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+const loginBox=document.getElementById("login");
+const appBox=document.getElementById("app");
+const emailInput=document.getElementById("email");
+const passwordInput=document.getElementById("password");
+const msgEl=document.getElementById("msg");
+const searchInput=document.getElementById("search");
+const rowsEl=document.getElementById("rows");
+const earlyEl=document.getElementById("early");
+const availableEl=document.getElementById("a");
+const reservedEl=document.getElementById("r");
+const paidEl=document.getElementById("p");
+const revenueEl=document.getElementById("rev");
+const barEl=document.getElementById("bar");
+const pctEl=document.getElementById("pct");
+const expensesEl=document.getElementById("exp");
+const balanceEl=document.getElementById("bal");
+const descInput=document.getElementById("desc");
+const valInput=document.getElementById("val");
+
+async function login(){
+  msgEl.textContent="";
+  const emailValue=emailInput.value.trim();
+  const passwordValue=passwordInput.value;
+  if(!emailValue || !passwordValue){
+    msgEl.textContent="Informe e-mail e senha.";
+    return;
+  }
+  const x=await sb.auth.signInWithPassword({email:emailValue,password:passwordValue});
+  if(x.error){
+    msgEl.textContent=x.error.message;
+    return;
+  }
+  await show();
+}
+async function show(){
+  const x=await sb.auth.getSession();
+  if(!x.data.session){
+    loginBox.style.display="block";
+    appBox.style.display="none";
+    return;
+  }
+  loginBox.style.display="none";
+  appBox.style.display="block";
+  await load();
+}
+async function logout(){await sb.auth.signOut();location.reload()}
+function money(v){return Number(v).toLocaleString("pt-BR",{style:"currency",currency:"BRL"})}
+async function load(){if(!sb)return;let n=await sb.from("rifa_numbers").select("id,numero,status").eq("rifa_id",RIFA).order("numero");let nums=n.data||[];availableEl.textContent=nums.filter(x=>x.status==="available").length;reservedEl.textContent=nums.filter(x=>x.status==="reserved").length;paidEl.textContent=nums.filter(x=>x.status==="paid").length;let paid=nums.filter(x=>x.status==="paid").length;revenueEl.textContent=money(paid*10);barEl.style.width=(paid/150*100)+"%";pctEl.textContent=(paid/150*100).toFixed(1)+"%";earlyEl.textContent=paid===150?"🎉 Todos os 150 números estão pagos. A rifa pode ser sorteada antes de 20/12/2026, conforme sua regra.":"";let e=await sb.from("rifa_despesas").select("valor").eq("rifa_id",RIFA);let ex=(e.data||[]).reduce((a,x)=>a+Number(x.valor),0);expaidEl.textContent=money(ex);balanceEl.textContent=money(paid*10-ex);
+let q=await sb.from("rifa_reservas").select("id,nome,whatsapp,numero_id,criado_em,rifa_numbers(id,numero,status)").order("criado_em",{ascending:false});let term=(searchInput.value||"").toLowerCase();lastRows=(q.data||[]).filter(x=>!term||String(x.rifa_numbers.numero).includes(term)||x.nome.toLowerCase().includes(term)||x.whatsapp.includes(term));rowsEl.innerHTML="";lastRows.forEach(x=>{let expired=false;let tr=document.createElement("tr");tr.innerHTML=`<td>${String(x.rifa_numbers.numero).padStart(3,"0")}</td><td>${x.nome}</td><td>${x.whatsapp}</td><td>${x.rifa_numbers.status}</td><td>${expired?"⚠️ aguardando pagamento":"Aguardando pagamento"}</td><td>${x.rifa_numbers.status==="reserved"?`<button class="btn ok" onclick="pay('${x.rifa_numbers.id}')">Confirmar pagamento</button> <button class="btn danger" onclick="cancel('${x.id}','${x.rifa_numbers.id}')">Liberar</button>`:x.rifa_numbers.status==="paid"?"Pago":"-"}</td>`;rowsEl.appendChild(tr)})}
+async function pay(id){let x=await sb.from("rifa_numbers").update({status:"paid"}).eq("id",id);if(x.error)alert(x.error.message);load()}
+async function cancel(res,num){await sb.from("rifa_reservas").delete().eq("id",res);await sb.from("rifa_numbers").update({status:"available"}).eq("id",num);load()}
+async function expense(){let d=descInput.value.trim(),v=Number(valInput.value);if(!d||!v)return alert("Preencha descrição e valor.");await sb.from("rifa_despesas").insert({rifa_id:RIFA,descricao:d,valor:v});descInput.value="";valInput.value="";load()}
+function exportCSV(){let csv="Numero,Nome,WhatsApp,Status,DataReserva\\n"+lastRows.map(x=>`${x.rifa_numbers.numero},"${x.nome.replaceAll('"','""')}","${x.whatsapp}",${x.rifa_numbers.status},${x.criado_em}`).join("\\n");let a=document.createElement("a");a.href=URL.createObjectURL(new Blob(["\\ufeff"+csv],{type:"text/csv;charset=utf-8"}));a.download="rifa_compradores.csv";a.click()}
+show();
+
+async function enableNotifications(){
+  if(!('Notification' in window)){
+    notifyStatus.textContent='Este navegador não oferece notificações.';
+    return;
+  }
+  const permission=await Notification.requestPermission();
+  notifyStatus.textContent=permission==='granted'?'Alertas ativados neste celular.': 'Permissão de notificações não concedida.';
+}
+
+function notifyNewReservation(row){
+  const num = row?.rifa_numbers?.numero ? String(row.rifa_numbers.numero).padStart(3,'0') : 'novo número';
+  const body = `Número ${num} reservado por ${row.nome}.`;
+  if('Notification' in window && Notification.permission==='granted'){
+    new Notification('🐾 Nova reserva — Rifa da Fifi', {body, tag:'rifa-reserva-'+row.id, icon:'data:image/svg+xml;charset=utf-8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🐾</text></svg>'});
+  }
+  const title=document.title;
+  document.title='🔔 Nova reserva!';
+  setTimeout(()=>document.title=title,5000);
+}
+
+function subscribeReservations(){
+  sb.channel('admin-rifa-reservas')
+    .on('postgres_changes',{event:'INSERT',schema:'public',table:'rifa_reservas'},async(payload)=>{
+      try{
+        const q=await sb.from('rifa_reservas').select('id,nome,whatsapp,numero_id,criado_em,rifa_numbers(id,numero,status)').eq('id',payload.new.id).single();
+        if(q.data) notifyNewReservation(q.data);
+        await load();
+      }catch(e){console.error(e);}
+    })
+    .subscribe();
+}
+
+if('Notification' in window){
+  notifyStatus.textContent=Notification.permission==='granted'?'Alertas ativados neste celular.':'Clique em “Ativar alertas neste celular”.';
+}
+subscribeReservations();
+setInterval(load,30000);
+</script></body></html>
